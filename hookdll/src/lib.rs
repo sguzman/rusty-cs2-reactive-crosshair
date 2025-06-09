@@ -23,7 +23,10 @@ use windows::{
 use imgui::{Context, FontConfig, FontSource};
 use imgui_dx11_renderer::Renderer;
 
+// Type alias for the function pointer we want to hook
 type FnPresent = unsafe extern "system" fn(*mut IDXGISwapChain, u32, u32) -> HRESULT;
+
+// A global static to hold the pointer to the original Present function
 static mut O_PRESENT: FnPresent = present_stub;
 
 // A stub function to initialize O_PRESENT to something safe
@@ -98,6 +101,10 @@ pub extern "system" fn DllMain(hinst: HINSTANCE, reason: u32, _: *const c_void) 
     BOOL(1)
 }
 
+fn get_main_window() -> HWND {
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() }
+}
+
 unsafe extern "system" fn setup_hook(_: *mut c_void) -> u32 {
     let mut p_device: *mut ID3D11Device = ptr::null_mut();
     let mut p_context: *mut ID3D11DeviceContext = ptr::null_mut();
@@ -119,9 +126,11 @@ unsafe extern "system" fn setup_hook(_: *mut c_void) -> u32 {
         None, Some(&mut p_context as *mut _ as _),
     ).unwrap();
 
-    // Correctly get the Present function pointer from the vtable
-    let vtable_ptr = (*p_swap_chain).lpVtbl;
-    let present_fn_ptr = (*vtable_ptr).Present as *mut c_void;
+    // Get the vtable from the swap chain object
+    let vtable = (*(p_swap_chain as *mut *mut *mut c_void)).read();
+
+    // Get the pointer to the original Present function (it's the 8th function in the vtable)
+    let present_fn_ptr = (*vtable.add(8)).read() as *mut c_void;
 
     // Create the trampoline that calls the original function
     let trampoline_mem = VirtualAlloc(None, 24, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
@@ -183,8 +192,4 @@ unsafe extern "system" fn hooked_present(p_swap_chain: *mut IDXGISwapChain, sync
 
     // Call the original Present function via our trampoline
     O_PRESENT(p_swap_chain, sync_interval, flags)
-}
-
-fn get_main_window() -> HWND {
-    unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() }
 }
