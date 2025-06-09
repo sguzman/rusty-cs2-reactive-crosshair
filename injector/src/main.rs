@@ -1,14 +1,11 @@
-// src/main.rs
-use windows::Win32::{
-    Foundation::HWND,
-    System::{Diagnostics::Debug::OutputDebugStringA, Threading::GetCurrentThreadId},
-};
+#![allow(unused_imports)]
+use windows::core::PCSTR;
+use windows::Win32::System::Diagnostics::Debug::OutputDebugStringA;
 
 fn main() {
     unsafe {
-        OutputDebugStringA("injector: Hello from injector!\0".as_ptr() as _);
-        // no actual injection yet
-        let tid = GetCurrentThreadId();
-        OutputDebugStringA(format!("injector: TID={} - exiting\n\0", tid).as_ptr() as _);
+        // These two lines should appear in DebugView when you run injector.exe
+        OutputDebugStringA(PCSTR(b"injector: Hello from injector!\0".as_ptr()));
+        OutputDebugStringA(PCSTR(b"injector: exiting\0".as_ptr()));
     }
 }

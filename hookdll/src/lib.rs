@@ -1,25 +1,21 @@
-// src/lib.rs
 #![allow(non_snake_case)]
-
 use core::ffi::c_void;
+use windows::core::PCSTR;
 use windows::Win32::{
     Foundation::{HINSTANCE, BOOL},
-    System::{
-        LibraryLoader::GetModuleHandleA,
-        Threading::DisableThreadLibraryCalls,
-        Diagnostics::Debug::OutputDebugStringA,
-    },
+    System::Diagnostics::Debug::OutputDebugStringA,
 };
 
 #[no_mangle]
-pub extern "system" fn DllMain(hinst: HINSTANCE, reason: u32, _: *mut c_void) -> BOOL {
+pub extern "system" fn DllMain(
+    _hinst: HINSTANCE,
+    _reason: u32,
+    _reserved: *mut c_void
+) -> BOOL {
     unsafe {
-        OutputDebugStringA("hookdll: DllMain()\0".as_ptr() as _);
-        if reason == 1 /*DLL_PROCESS_ATTACH*/ {
-            DisableThreadLibraryCalls(hinst);
-            OutputDebugStringA("hookdll: Attached successfully\n\0".as_ptr() as _);
-        }
+        // This should show up in DebugView as soon as the DLL loads
+        OutputDebugStringA(PCSTR(b"hookdll: DllMain called\0".as_ptr()));
     }
-    // TRUE
+    // Return TRUE so Windows keeps the DLL loaded
     BOOL(1)
 }
