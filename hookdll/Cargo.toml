@@ -7,8 +7,12 @@ edition = "2024"
 crate-type = ["cdylib"] # builds a .dll
 
 [dependencies]
+# Use the latest versions your environment can find
+detour = "0.8.1"
 imgui = "0.8.0"
 imgui-dx11-renderer = "0.8.0"
+
+# Specify the version of the windows crate we need for our code
 windows = { version = "0.56.0", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
@@ -18,6 +22,16 @@ windows = { version = "0.56.0", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
-    "Win32_System_Memory",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# This "patch" section is the fix. It tells Cargo: "Whenever any crate
+# asks for the 'windows' crate or its components, ignore the version they
+# ask for and give them version 0.56.0 from the official git repository instead."
+# This forces the old 'detour' crate to use the new, working 'windows' crate.
+[patch.crates-io]
+windows = { git = "https://github.com/microsoft/windows-rs", tag = "0.56.0" }
+windows-core = { git = "https://github.com/microsoft/windows-rs", tag = "0.56.0" }
+windows-implement = { git = "https://github.com/microsoft/windows-rs", tag = "0.56.0" }
+windows-interface = { git = "https://github.com/microsoft/windows-rs", tag = "0.56.0" }
+windows-targets = { git = "https://github.com/microsoft/windows-rs", tag = "0.56.0" }

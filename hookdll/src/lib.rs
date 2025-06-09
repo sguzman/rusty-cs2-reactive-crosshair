@@ -1,8 +1,9 @@
 #![allow(non_snake_case)]
 
+use imgui::{Context, FontConfig, FontSource};
+use imgui_dx11_renderer::Renderer;
 use std::{ffi::c_void, ptr, sync::Once};
 use windows::{
-    core::HRESULT,
     Win32::{
         Foundation::{BOOL, HINSTANCE, HWND},
         Graphics::{
@@ -12,16 +13,15 @@ use windows::{
         System::{
             LibraryLoader::DisableThreadLibraryCalls,
             Memory::{
-                VirtualAlloc, VirtualProtect, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE,
-                PAGE_PROTECTION_FLAGS,
+                MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS,
+                VirtualAlloc, VirtualProtect,
             },
             SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH},
             Threading::CreateThread,
         },
     },
+    core::HRESULT,
 };
-use imgui::{Context, FontConfig, FontSource};
-use imgui_dx11_renderer::Renderer;
 
 // Type alias for the function pointer we want to hook
 type FnPresent = unsafe extern "system" fn(*mut IDXGISwapChain, u32, u32) -> HRESULT;
@@ -69,7 +69,10 @@ impl Hook {
         ptr::copy_nonoverlapping(patch.as_ptr(), target as _, 12);
         VirtualProtect(target, 12, old_protect, &mut old_protect);
 
-        Ok(Hook { target, original_bytes })
+        Ok(Hook {
+            target,
+            original_bytes,
+        })
     }
 
     // Restores the original function bytes
@@ -80,7 +83,6 @@ impl Hook {
         VirtualProtect(self.target, 12, old_protect, &mut old_protect);
     }
 }
-
 
 #[no_mangle]
 pub extern "system" fn DllMain(hinst: HINSTANCE, reason: u32, _: *const c_void) -> BOOL {
@@ -121,20 +123,30 @@ unsafe extern "system" fn setup_hook(_: *mut c_void) -> u32 {
     let feature_level = D3D_FEATURE_LEVEL_11_0;
 
     D3D11CreateDeviceAndSwapChain(
-        None, D3D_DRIVER_TYPE_HARDWARE, None, 0, Some(&feature_level), 1, D3D11_SDK_VERSION,
-        Some(&swap_chain_desc), Some(&mut p_swap_chain as *mut _ as _), Some(&mut p_device as *mut _ as _),
-        None, Some(&mut p_context as *mut _ as _),
-    ).unwrap();
+        None,
+        D3D_DRIVER_TYPE_HARDWARE,
+        None,
+        0,
+        Some(&feature_level),
+        1,
+        D3D11_SDK_VERSION,
+        Some(&swap_chain_desc),
+        Some(&mut p_swap_chain as *mut _ as _),
+        Some(&mut p_device as *mut _ as _),
+        None,
+        Some(&mut p_context as *mut _ as _),
+    )
+    .unwrap();
 
-    // Get the vtable from the swap chain object
-    let vtable = (*(p_swap_chain as *mut *mut *mut c_void)).read();
-
-    // Get the pointer to the original Present function (it's the 8th function in the vtable)
+    // Corrected low-level vtable access
+    let vtable = (*(p_swap_chain as *mut *mut *const ())).read();
     let present_fn_ptr = (*vtable.add(8)).read() as *mut c_void;
 
     // Create the trampoline that calls the original function
     let trampoline_mem = VirtualAlloc(None, 24, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if trampoline_mem.is_null() { return 1; }
+    if trampoline_mem.is_null() {
+        return 1;
+    }
 
     let original_fn_bytes = present_fn_ptr as *const u8;
     ptr::copy_nonoverlapping(original_fn_bytes, trampoline_mem as _, 12);
@@ -144,7 +156,11 @@ unsafe extern "system" fn setup_hook(_: *mut c_void) -> u32 {
         0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xE0,
     ];
     *(jmp_patch.as_mut_ptr().add(2) as *mut u64) = jmp_back_addr;
-    ptr::copy_nonoverlapping(jmp_patch.as_ptr(), (trampoline_mem as *mut u8).add(12) as _, 12);
+    ptr::copy_nonoverlapping(
+        jmp_patch.as_ptr(),
+        (trampoline_mem as *mut u8).add(12) as _,
+        12,
+    );
 
     O_PRESENT = std::mem::transmute(trampoline_mem);
 
@@ -158,17 +174,27 @@ unsafe extern "system" fn setup_hook(_: *mut c_void) -> u32 {
     0
 }
 
-
-unsafe extern "system" fn hooked_present(p_swap_chain: *mut IDXGISwapChain, sync_interval: u32, flags: u32) -> HRESULT {
+unsafe extern "system" fn hooked_present(
+    p_swap_chain: *mut IDXGISwapChain,
+    sync_interval: u32,
+    flags: u32,
+) -> HRESULT {
     INIT.call_once(|| {
         let mut p_device: *mut ID3D11Device = ptr::null_mut();
         let mut p_context: *mut ID3D11DeviceContext = ptr::null_mut();
-        (*p_swap_chain).GetDevice(&ID3D11Device::IID, &mut p_device as *mut _ as _).unwrap();
+        (*p_swap_chain)
+            .GetDevice(&ID3D11Device::IID, &mut p_device as *mut _ as _)
+            .unwrap();
         (*p_device).GetImmediateContext(&mut p_context);
 
         let mut imgui = Context::create();
         imgui.set_ini_filename(None);
-        imgui.fonts().add_font(&[FontSource::DefaultFontData { config: Some(FontConfig { size_pixels: 16.0, ..Default::default() }) }]);
+        imgui.fonts().add_font(&[FontSource::DefaultFontData {
+            config: Some(FontConfig {
+                size_pixels: 16.0,
+                ..Default::default()
+            }),
+        }]);
 
         IMGUI_CONTEXT = Box::into_raw(Box::new(imgui));
         RENDERER = Some(Renderer::new(&mut *IMGUI_CONTEXT, p_device, p_context));
