@@ -7,8 +7,8 @@ edition = "2024"
 crate-type = ["cdylib"] # builds a .dll
 
 [dependencies]
-detour = "0.8"
-# Downgrade to the latest version your environment can find
+# Update detour to a version compatible with a more recent windows crate
+detour = "0.9.0"
 imgui = "0.8.0"
 imgui-dx11-renderer = "0.8.0"
 windows = { version = "0.56.0", features = [
