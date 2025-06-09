@@ -2,7 +2,7 @@
 
 use std::{ffi::c_void, ptr, sync::Once};
 use windows::{
-    core::{HRESULT, PCSTR},
+    core::HRESULT,
     Win32::{
         Foundation::{BOOL, HINSTANCE, HWND},
         Graphics::{
@@ -44,16 +44,17 @@ pub extern "system" fn DllMain(hinst: HINSTANCE, reason: u32, _: *const c_void) 
 
 // Hook setup
 unsafe extern "system" fn setup_hook(_: *mut c_void) -> u32 {
-    // To get the Present function pointer, we need to create a dummy device and swap chain.
-    let mut p_device: Option<ID3D11Device> = None;
-    let mut p_context: Option<ID3D11DeviceContext> = None;
-    let mut p_swap_chain: Option<IDXGISwapChain> = None;
+    // To get the Present function pointer, we create a dummy device and swap chain.
+    // We use raw pointers here as that's what the older imgui-dx11-renderer expects.
+    let mut p_device: *mut ID3D11Device = ptr::null_mut();
+    let mut p_context: *mut ID3D11DeviceContext = ptr::null_mut();
+    let mut p_swap_chain: *mut IDXGISwapChain = ptr::null_mut();
 
     let mut swap_chain_desc = DXGI_SWAP_CHAIN_DESC::default();
     swap_chain_desc.BufferCount = 1;
     swap_chain_desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swap_chain_desc.OutputWindow = get_main_window(); // Find a real window
+    swap_chain_desc.OutputWindow = get_main_window();
     swap_chain_desc.SampleDesc.Count = 1;
     swap_chain_desc.Windowed = true.into();
 
@@ -68,19 +69,21 @@ unsafe extern "system" fn setup_hook(_: *mut c_void) -> u32 {
         1,
         D3D11_SDK_VERSION,
         Some(&swap_chain_desc),
-        Some(&mut p_swap_chain),
-        Some(&mut p_device),
+        Some(&mut p_swap_chain as *mut _ as _),
+        Some(&mut p_device as *mut _ as _),
         None,
-        Some(&mut p_context),
-    )
-    .is_err()
-    {
+        Some(&mut p_context as *mut _ as _),
+    ).is_err() {
         return 1;
     }
 
-    let swap_chain = p_swap_chain.unwrap();
-    let vtable = swap_chain.vtable();
+    let vtable = (*p_swap_chain).vtable();
     let present_fn = vtable.Present;
+
+    // Release the dummy objects to prevent resource leaks
+    (*p_context).Release();
+    (*p_device).Release();
+    (*p_swap_chain).Release();
 
     PresentHook
         .initialize(std::mem::transmute(present_fn), hooked_present)
@@ -90,13 +93,10 @@ unsafe extern "system" fn setup_hook(_: *mut c_void) -> u32 {
     0
 }
 
-// This is a helper to find the game window.
-// You might need a more robust way for a real game.
 fn get_main_window() -> HWND {
+    // This is a simple way to get a window handle. For a real game,
+    // you might need a more robust method like finding the window by its class name.
     unsafe {
-        // Find window by class or title. For CS2, you may need to find the correct window class name.
-        // As a fallback, this code is not provided since it can be complex.
-        // A simple approach is to get the foreground window, but it's not reliable.
         windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow()
     }
 }
@@ -111,10 +111,11 @@ unsafe extern "system" fn hooked_present(
     let swap_chain = &*p_swap_chain;
 
     INIT.call_once(|| {
-        let mut device: Option<ID3D11Device> = None;
-        swap_chain.GetDevice(&mut device).unwrap();
-        let mut context: Option<ID3D11DeviceContext> = None;
-        device.as_ref().unwrap().GetImmediateContext(&mut context);
+        let mut p_device: *mut ID3D11Device = ptr::null_mut();
+        let mut p_context: *mut ID3D11DeviceContext = ptr::null_mut();
+
+        swap_chain.GetDevice(&ID3D11Device::IID, &mut p_device as *mut _ as _).unwrap();
+        (*p_device).GetImmediateContext(&mut p_context);
 
         let mut sd = DXGI_SWAP_CHAIN_DESC::default();
         swap_chain.GetDesc(&mut sd).unwrap();
@@ -122,41 +123,34 @@ unsafe extern "system" fn hooked_present(
 
         let mut imgui = Context::create();
         imgui.set_ini_filename(None);
-        
-        // This is important to get input working later if you want.
-        imgui.io_mut().backend_flags |= imgui::BackendFlags::RENDERER_HAS_VTX_OFFSET;
-
-        // Setup font
         imgui.fonts().add_font(&[FontSource::DefaultFontData { config: Some(FontConfig { size_pixels: 16.0, ..Default::default() }) }]);
 
+        // The older renderer takes raw pointers
+        let renderer = Renderer::new(&mut imgui, p_device, p_context);
+
         IMGUI_CONTEXT = Box::into_raw(Box::new(imgui));
-        RENDERER = Some(Renderer::new(
-            &mut *IMGUI_CONTEXT,
-            device.unwrap(),
-            context.unwrap(),
-        ).unwrap());
+        RENDERER = Some(renderer);
     });
     
     // Each frame
     let imgui = &mut *IMGUI_CONTEXT;
     let renderer = RENDERER.as_mut().unwrap();
 
-    // Update display size from swap chain
     let mut sd = DXGI_SWAP_CHAIN_DESC::default();
     swap_chain.GetDesc(&mut sd).unwrap();
     imgui.io_mut().display_size = [sd.BufferDesc.Width as f32, sd.BufferDesc.Height as f32];
 
     imgui.new_frame();
 
-    // Draw a white crosshair
+    // Draw a white crosshair using the older API
     let draw_list = imgui.get_background_draw_list();
     let [w, h] = imgui.io().display_size;
     let (cx, cy) = (w * 0.5, h * 0.5);
-    draw_list.add_line([cx - 10.0, cy], [cx + 10.0, cy], 0xFFFFFFFF).thickness(2.0).build();
-    draw_list.add_line([cx, cy - 10.0], [cx, cy + 10.0], 0xFFFFFFFF).thickness(2.0).build();
+    draw_list.add_line([cx - 10.0, cy], [cx + 10.0, cy], 0xFFFFFFFF, 2.0);
+    draw_list.add_line([cx, cy - 10.0], [cx, cy + 10.0], 0xFFFFFFFF, 2.0);
 
-    imgui.render();
-    renderer.render(imgui.render()).unwrap();
+    // The older rendering function doesn't return a Result
+    renderer.render(imgui.render());
 
     PresentHook.call(p_swap_chain, sync_interval, flags)
 }
