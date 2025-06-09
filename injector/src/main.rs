@@ -1,4 +1,4 @@
-use std::{env, ffi::{c_void, OsStr}, os::windows::ffi::OsStrExt, ptr};
+use std::{env, ffi::{c_void, OsStr}, os::windows::ffi::OsStrExt}; // Removed unused 'ptr'
 use windows::{
     core::{PCWSTR, Result, PCSTR},
     Win32::{
@@ -110,7 +110,8 @@ fn main() -> Result<()> {
     let k32 = unsafe { GetModuleHandleW(PCWSTR(to_wide("kernel32.dll").as_ptr()))? };
     let load_addr = unsafe {
         GetProcAddress(k32, PCSTR(b"LoadLibraryW\0".as_ptr()))
-    }.ok_or_else(|| windows::core::Error::new(windows::core::HRESULT(0), "GetProcAddress failed for LoadLibraryW".into()))?;
+    // The .into() is removed here to fix the compilation error
+    }.ok_or_else(|| windows::core::Error::new(windows::core::HRESULT(0), "GetProcAddress failed for LoadLibraryW"))?;
 
     let thread = unsafe {
         CreateRemoteThread(
