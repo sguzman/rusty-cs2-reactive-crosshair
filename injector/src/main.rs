@@ -1,25 +1,28 @@
-use std::{env, ffi::{c_void, OsStr}, os::windows::ffi::OsStrExt}; // Removed unused 'ptr'
+use std::{
+    env,
+    ffi::{OsStr, c_void},
+    os::windows::ffi::OsStrExt,
+}; // Removed unused 'ptr'
 use windows::{
-    core::{PCWSTR, Result, PCSTR},
     Win32::{
         Foundation::{CloseHandle, HANDLE},
         System::{
             Diagnostics::Debug::WriteProcessMemory,
             Diagnostics::ToolHelp::{
-                CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+                CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
                 TH32CS_SNAPPROCESS,
             },
             LibraryLoader::{GetModuleHandleW, GetProcAddress},
             Memory::{
-                VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE,
-                PAGE_READWRITE,
+                MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAllocEx, VirtualFreeEx,
             },
             Threading::{
-                CreateRemoteThread, OpenProcess, WaitForSingleObject, PROCESS_CREATE_THREAD,
-                PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
+                CreateRemoteThread, OpenProcess, PROCESS_CREATE_THREAD, PROCESS_VM_OPERATION,
+                PROCESS_VM_READ, PROCESS_VM_WRITE, WaitForSingleObject,
             },
         },
     },
+    core::{PCSTR, PCWSTR, Result},
 };
 
 fn find_pid(exe: &str) -> Option<u32> {
@@ -71,7 +74,8 @@ fn main() -> Result<()> {
     let dll_path = &args[2];
     let dll_path_wide = to_wide(dll_path);
 
-    let pid = find_pid(proc_name).unwrap_or_else(|| panic!("injector: process '{}' not found", proc_name));
+    let pid = find_pid(proc_name)
+        .unwrap_or_else(|| panic!("injector: process '{}' not found", proc_name));
     println!("injector: found PID {}", pid);
 
     let proc: HANDLE = unsafe {
@@ -84,9 +88,8 @@ fn main() -> Result<()> {
     println!("injector: OpenProcess OK");
 
     let size = dll_path_wide.len() * std::mem::size_of::<u16>();
-    let remote_mem: *mut c_void = unsafe {
-        VirtualAllocEx(proc, None, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
-    };
+    let remote_mem: *mut c_void =
+        unsafe { VirtualAllocEx(proc, None, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE) };
     if remote_mem.is_null() {
         return Err(windows::core::Error::from_win32());
     }
@@ -103,15 +106,24 @@ fn main() -> Result<()> {
         )?;
     }
     if bytes_written != size {
-         panic!("injector: WriteProcessMemory failed: wrote {} of {} bytes", bytes_written, size);
+        panic!(
+            "injector: WriteProcessMemory failed: wrote {} of {} bytes",
+            bytes_written, size
+        );
     }
     println!("injector: WriteProcessMemory OK");
 
     let k32 = unsafe { GetModuleHandleW(PCWSTR(to_wide("kernel32.dll").as_ptr()))? };
     let load_addr = unsafe {
         GetProcAddress(k32, PCSTR(b"LoadLibraryW\0".as_ptr()))
-    // The .into() is removed here to fix the compilation error
-    }.ok_or_else(|| windows::core::Error::new(windows::core::HRESULT(0), "GetProcAddress failed for LoadLibraryW"))?;
+        // The .into() is removed here to fix the compilation error
+    }
+    .ok_or_else(|| {
+        windows::core::Error::new(
+            windows::core::HRESULT(0),
+            "GetProcAddress failed for LoadLibraryW",
+        )
+    })?;
 
     let thread = unsafe {
         CreateRemoteThread(
